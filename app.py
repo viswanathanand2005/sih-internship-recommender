@@ -57,11 +57,16 @@ def get_translated_texts(language_code):
     translated_texts = {}
     for key, value in BASE_TEXT.items():
         try:
-            # The placeholder is special; we only display it, not use it for logic
-            if key == "skills_placeholder" and language_code != 'en':
-                 translated_texts[key] = translator.translate(value, dest=language_code).text
+            # **THE FIX IS HERE:** Special handling for strings with f-string placeholders
+            # to prevent the placeholder itself from being translated.
+            if key == "success_header":
+                parts = value.split('{count}')
+                translated_part1 = translator.translate(parts[0], dest=language_code).text
+                translated_part2 = translator.translate(parts[1], dest=language_code).text
+                # Reassemble the string with the placeholder intact
+                translated_texts[key] = f"{translated_part1}{{count}}{translated_part2}"
             else:
-                 translated_texts[key] = translator.translate(value, dest=language_code).text
+                translated_texts[key] = translator.translate(value, dest=language_code).text
         except Exception as e:
             st.error(f"Translation Error: {e}")
             # Fallback to English if translation fails
@@ -91,8 +96,9 @@ st.write(texts["subtitle"])
 
 skills_input = st.text_area(
     texts["skills_label"],
-    # The placeholder for display is translated
-    texts["skills_placeholder"]
+    # **THE SECOND FIX IS HERE:** The value in the text box is always the English
+    # placeholder to ensure the model receives English input.
+    value=BASE_TEXT["skills_placeholder"]
 )
 
 col1, col2 = st.columns(2)
@@ -103,8 +109,7 @@ with col2:
     job_type = st.selectbox(texts["job_type_label"], options=job_type_options)
 
 if st.button(texts["button_text"], type="primary"):
-    # **THE FIX IS HERE:** We now check against the original English placeholder
-    # from BASE_TEXT, not the translated one from `texts`.
+    # The check now correctly compares against the English placeholder
     if not skills_input or skills_input == BASE_TEXT["skills_placeholder"]:
         st.warning(texts["warning_text"])
     else:
