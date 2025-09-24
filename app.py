@@ -1,7 +1,12 @@
-# app.py
-
 import streamlit as st
 from recommender import JobRecommender
+from googletrans import Translator
+import sys
+# This is the crucial fix: it imports the legacy_cgi.py file and makes it 
+# available to the googletrans library, which needs it to run.
+import legacy_cgi as cgi
+sys.modules["cgi"] = cgi
+
 
 # --- Page Configuration ---
 st.set_page_config(
@@ -10,53 +15,110 @@ st.set_page_config(
     layout="centered"
 )
 
-# --- Caching the Recommender ---
+# --- Language & Translation Setup ---
+# Base English text and language codes for the translator
+BASE_TEXT = {
+    "title": "🎯 Internship Recommendation System",
+    "subtitle": "Enter the skills you have, and we'll recommend the best internships for you!",
+    "skills_label": "Enter your skills (comma-separated)",
+    "skills_placeholder": "Python, Machine Learning, Data Analysis, SQL, Docker",
+    "num_recs_label": "Number of recommendations",
+    "job_type_label": "Select job type",
+    "button_text": "Get Recommendations",
+    "warning_text": "Please enter at least one skill.",
+    "success_header": "Here are the top {count} recommendations for you:",
+    "error_text": "No internships found matching your skills. Try different ones!",
+    "company_label": "Company",
+    "location_label": "Location",
+    "skills_result_label": "Skills"
+}
+
+LANGUAGE_CODES = {
+    "English": "en",
+    "Hindi (हिन्दी)": "hi",
+    "Telugu (తెలుగు)": "te",
+    "Tamil (தமிழ்)": "ta",
+    "Spanish (Español)": "es"
+}
+
+# --- Caching Functions ---
 @st.cache_resource
 def load_recommender():
-    """Loads the JobRecommender instance. Caching ensures it runs only once."""
+    """Loads and caches the JobRecommender instance."""
     return JobRecommender('internships.csv')
 
+@st.cache_data
+def get_translated_texts(language_code):
+    """Translates and caches the UI text using the Google Translate API."""
+    if language_code == 'en':
+        return BASE_TEXT
+    
+    translator = Translator()
+    translated_texts = {}
+    for key, value in BASE_TEXT.items():
+        try:
+            # The placeholder is special; we only display it, not use it for logic
+            if key == "skills_placeholder" and language_code != 'en':
+                 translated_texts[key] = translator.translate(value, dest=language_code).text
+            else:
+                 translated_texts[key] = translator.translate(value, dest=language_code).text
+        except Exception as e:
+            st.error(f"Translation Error: {e}")
+            # Fallback to English if translation fails
+            translated_texts[key] = value
+            
+    return translated_texts
+
+# --- Load Data and Models ---
 recommender = load_recommender()
 df = recommender.df
 
-# --- UI Components ---
-st.title("🎯 Internship Recommendation System")
-st.write(
-    "Enter the skills you have, and we'll recommend the best internships for you!"
+# --- Sidebar for Language Selection ---
+st.sidebar.header("Settings")
+selected_language_name = st.sidebar.selectbox(
+    label="Language",
+    options=list(LANGUAGE_CODES.keys())
 )
+# Get the corresponding language code
+selected_lang_code = LANGUAGE_CODES[selected_language_name]
+# Get the translated UI texts
+texts = get_translated_texts(selected_lang_code)
 
-# User input for skills
+
+# --- Main UI Components ---
+st.title(texts["title"])
+st.write(texts["subtitle"])
+
 skills_input = st.text_area(
-    "Enter your skills (comma-separated)",
-    "Python, Machine Learning, Data Analysis, SQL, Docker"
+    texts["skills_label"],
+    # The placeholder for display is translated
+    texts["skills_placeholder"]
 )
 
-# UI for filtering
 col1, col2 = st.columns(2)
 with col1:
-    top_n = st.slider("Number of recommendations", 5, 20, 10)
+    top_n = st.slider(texts["num_recs_label"], 5, 20, 10)
 with col2:
     job_type_options = ['Any'] + list(df['Job Type'].unique())
-    job_type = st.selectbox("Select job type", options=job_type_options)
+    job_type = st.selectbox(texts["job_type_label"], options=job_type_options)
 
-# Recommendation button
-if st.button("Get Recommendations", type="primary"):
-    if not skills_input:
-        st.warning("Please enter at least one skill.")
+if st.button(texts["button_text"], type="primary"):
+    # **THE FIX IS HERE:** We now check against the original English placeholder
+    # from BASE_TEXT, not the translated one from `texts`.
+    if not skills_input or skills_input == BASE_TEXT["skills_placeholder"]:
+        st.warning(texts["warning_text"])
     else:
-        # Parse skills and get recommendations
         user_skills = [skill.strip() for skill in skills_input.split(',')]
         recommendations = recommender.recommend(user_skills, top_n=top_n, job_type=job_type)
 
-        # --- Display Results ---
         if not recommendations.empty:
-            st.success(f"Here are the top {len(recommendations)} recommendations for you:")
+            st.success(texts["success_header"].format(count=len(recommendations)))
             for index, row in recommendations.iterrows():
                 with st.container():
                     st.markdown(f"### {row['Job Title']}")
-                    st.markdown(f"**Company:** {row['Company']}")
-                    st.markdown(f"**Location:** {row['Location']}")
-                    st.markdown(f"**Skills:** `{row['Skills']}`")
+                    st.markdown(f"**{texts['company_label']}:** {row['Company']}")
+                    st.markdown(f"**{texts['location_label']}:** {row['Location']}")
+                    st.markdown(f"**{texts['skills_result_label']}:** `{row['Skills']}`")
                     st.divider()
         else:
-            st.error("No internships found matching your skills. Try different ones!")
+            st.error(texts["error_text"])
